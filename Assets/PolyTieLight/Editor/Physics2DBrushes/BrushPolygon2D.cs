@@ -1,0 +1,254 @@
+﻿using UnityEngine;
+using UnityEditor;
+using System;
+using System.Linq;
+using System.Collections;
+using System.Collections.Generic;
+using System.Text;
+using System.Reflection;
+
+[CustomEditor(typeof(PolygonCollider2D))]
+public class BrushPolygon2D : Editor 
+{
+    private static Dictionary<PolygonCollider2D, ColorStates> _assignedColors = new Dictionary<PolygonCollider2D,ColorStates>();
+    private static Vector2 _selectedVertexStartPosition;    // Necessary for axis aligned movement.
+    private static KeyCode _lastKey;
+    private static bool _isDrawing;
+    private static bool _isPressingKey;
+    private static int _selectedVertex = -1;
+
+    public bool isManipulatingPolygon { get; private set; }
+
+    [MenuItem("GameObject/Create 2D Objects/Polygons/Polygon &p")]
+    public static void CreatePolygon()
+    {
+        var go = new GameObject("Polygon2D");
+        Undo.RegisterCreatedObjectUndo(go, "Create Polygon2D");
+        var collider = go.AddComponent<PolygonCollider2D>();
+        collider.points = null;
+        _assignedColors.Add(collider, ColorStates.IDLE);
+
+        activateDrawing(go);
+    }
+
+    [DrawGizmo(GizmoType.InSelectionHierarchy | GizmoType.NotInSelectionHierarchy | GizmoType.Pickable)]
+    static void DrawPolgonColliders2D(PolygonCollider2D polygon, GizmoType gizmoType)
+    {
+        BrushSettingsWindow.Initialize();
+        var lineColor = ColorPalletReader.GetLineColor(ColorStates.SELECTED);
+        if (gizmoType == GizmoType.NotInSelectionHierarchy)
+        {
+            ColorStates state = ColorStates.IDLE;
+            if (_assignedColors.TryGetValue(polygon, out state))
+            {
+                lineColor = ColorPalletReader.GetLineColor(state);
+            }
+            else
+            {
+                state = Utilities.DetermineColorState(polygon);
+                lineColor = ColorPalletReader.GetLineColor(state);
+                _assignedColors.Add(polygon, state);    // Cache it because GetComponent is slow.
+            }
+
+        }
+
+        drawPolygon(polygon, lineColor);
+    }
+
+    // STATIC HELPER FUNCTIONS
+    //
+    private static void drawPolygon(PolygonCollider2D polygon, Color lineColor)
+    {
+        Vector2[] vertices = polygon.GetWorldPoints();
+        if (vertices == null)
+            return;
+
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            int ii = (i + 1) % vertices.Length;
+            // Draw edge
+            Gizmos.color = lineColor;
+            Gizmos.DrawLine(vertices[i], vertices[ii]);
+            
+            // Draw vertex
+            if (Selection.activeGameObject == polygon.gameObject)
+            {
+                ColorStates state = ColorStates.IDLE;
+                if (_assignedColors.TryGetValue(polygon, out state))
+                {
+                    Gizmos.color = ColorPalletReader.GetVertexColor(state);
+                }
+                else
+                {
+                    state = Utilities.DetermineColorState(polygon);
+                    Gizmos.color = ColorPalletReader.GetVertexColor(state);
+                    _assignedColors.Add(polygon, state);
+                }
+
+                if (i == _selectedVertex)
+                    Gizmos.color = ColorPalletReader.GetVertexColor(ColorStates.SELECTED);
+                Gizmos.DrawSphere(vertices[i], BrushSettingsWindow.VertexSize);
+                if (BrushSettingsWindow.ShowVertexInfo == true)
+                    Handles.Label(vertices[i] + new Vector2(0.1f, 0.4f), (vertices[i] - new Vector2(polygon.transform.position.x, polygon.transform.position.y)).ToString());
+            }
+        }
+        Handles.color = lineColor;
+    }
+
+    public override void OnInspectorGUI()
+    {
+        base.OnInspectorGUI();
+		
+		// Update center button.
+		if (GUILayout.Button("Update Center") == true)
+		{
+            var poly = target as PolygonCollider2D;
+            if (poly != null)
+                poly.UpdateCenter();
+		}
+    }
+
+    void OnSceneGUI()
+    {
+        var prefabType = PrefabUtility.GetPrefabType(target);
+        if (prefabType == PrefabType.Prefab || prefabType == PrefabType.ModelPrefab)
+            return;
+
+        var polygon = target as PolygonCollider2D;
+
+        if (polygon == null)
+            return;
+        int controlId = GUIUtility.GetControlID(FocusType.Passive);
+
+        if (_isDrawing == true)
+        {
+            isManipulatingPolygon = true;
+            if (Event.current.type == EventType.MouseUp)
+            {
+                if (Event.current.button == 0)  // Left mouse button adds new vertex to the polygon.
+                {
+                    Utilities.PerformActionAtMouseWorldPosition((p) =>
+                    {
+                        if (BrushSettingsWindow.SnapToGrid == true)
+                        {
+                            p = Utilities.SnapToGrid(p, BrushSettingsWindow.GridSize);
+                        }
+                        polygon.InsertVertex(p);
+                        EditorUtility.SetDirty(target);
+                    });
+                }
+                else if (Event.current.button == 1)  // Right mouse button stops drawing and closes the polygon.
+                {
+                    _isDrawing = false;
+                    isManipulatingPolygon = false;
+                    polygon.UpdateCenter();
+                }
+            }
+        }
+
+        if (Selection.activeGameObject == polygon.gameObject)
+        {
+            if (Event.current.type == EventType.MouseDown && Event.current.clickCount > 1)
+            {
+                Utilities.PerformActionAtMouseWorldPosition((p) =>
+                {
+                    polygon.InsertVertex(p);
+                    EditorUtility.SetDirty(target);
+                });
+            }
+            if (Event.current.type == EventType.MouseMove && _isDrawing == false && Event.current.type != EventType.MouseDrag)
+            {
+                // Select vertex
+                Utilities.PerformActionAtMouseWorldPosition(p => _selectedVertex = polygon.TrySelectVertex(p));
+                if (_selectedVertex >= 0)
+                {
+                    _selectedVertexStartPosition = polygon.GetWorldPoint(polygon.points[_selectedVertex]);
+                    HandleUtility.Repaint();
+                }
+            }
+        }
+
+
+        if (_selectedVertex != -1 && Event.current.button == 1)
+        {
+            var deleteOption = new GUIContent();
+            deleteOption.text = "Delete Vertex";
+            EditorUtility.DisplayCustomMenu(new Rect(Event.current.mousePosition.x, Event.current.mousePosition.y, 0, 0), new GUIContent[] { deleteOption }, -1, (userData, options, selected) =>
+            {
+                switch (selected)
+                {
+                    case 0:
+                        if (polygon.DeleteVertex(_selectedVertex) == false)
+                            Undo.DestroyObjectImmediate(polygon.gameObject);
+                        break;
+                    default:
+                        break;
+                }
+            }, null);
+        }
+
+        if (Event.current.type == EventType.keyDown && _isPressingKey == false)
+        {
+            _lastKey = Event.current.keyCode;
+            _isPressingKey = true;
+        }
+        if (Event.current.type == EventType.keyUp)
+        {
+            _lastKey = KeyCode.None;
+            _isPressingKey = false;
+        }
+
+        // Manipulate polygon vertices
+        if (Event.current.type == EventType.MouseDrag && _selectedVertex != -1 && Event.current.button == 0)
+        {
+            // Update position of the selected vertex
+            Utilities.PerformActionAtMouseWorldPosition((p) => 
+            {
+                if (BrushSettingsWindow.SnapToGrid == true)
+                {
+                    p = Utilities.SnapToGrid(p, BrushSettingsWindow.GridSize);
+                }
+                else if (_lastKey == KeyCode.V)     // Snap to vertex.
+                {
+                    p = Utilities.SnapToVertex(polygon, p, 1.0f);
+                }
+                else if (Event.current.modifiers == EventModifiers.Shift)    // Align with axis when holding shift.
+                {
+                    p = Utilities.AlignWithAxis(p, _selectedVertexStartPosition);
+                }
+                else if (Event.current.modifiers == EventModifiers.Control)
+                {
+                    float xMove = EditorPrefs.GetFloat("MoveSnapX");
+                    float yMove = EditorPrefs.GetFloat("MoveSnapY");
+                    p = Utilities.SnapToValues(p, _selectedVertexStartPosition, xMove, yMove);
+                }
+                polygon.UpdateVertexPosition(p, _selectedVertex);
+            });
+        }
+
+        if (Event.current.type == EventType.MouseUp && _selectedVertex != -1)
+        {
+            _selectedVertex = -1;
+        }
+
+        if (_selectedVertex != -1)
+        {
+            DefaultHandles.Hidden = true;
+        }
+        else
+        {
+            DefaultHandles.Hidden = false;
+        }
+
+        if ((Event.current.type == EventType.Layout && _isDrawing == true) || _selectedVertex != -1)
+        {
+            HandleUtility.AddDefaultControl(controlId);
+        }
+    }
+
+    private static void activateDrawing(GameObject go)
+    {
+        Selection.activeGameObject = go;
+        _isDrawing = true;
+    }
+}

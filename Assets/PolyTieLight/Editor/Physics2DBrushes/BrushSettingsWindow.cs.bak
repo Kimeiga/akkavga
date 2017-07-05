@@ -1,0 +1,135 @@
+﻿using UnityEngine;
+using UnityEditor;
+using System.Collections;
+using System.Text;
+using System.IO;
+
+public class BrushSettingsWindow : EditorWindow
+{
+    private static ColorPallet[] _colorPallets;
+    private static string[] _colorOptions;
+    private static int _selectedColorPallet;
+    
+    [SerializeField]
+    public static float VertexSize = 0.1f;
+    [SerializeField]
+    public static bool ShowVertexInfo = true;
+
+    [SerializeField]
+    public static float GridSize = 0.5f;
+    [SerializeField]
+    public static bool SnapToGrid = false;
+    [SerializeField]
+    public static bool ShowSnapGrid = false;
+
+    private static bool _initialized = false;
+
+    [MenuItem("Window/PolyTie/Display Settings")]
+    static void Init()
+    {
+        // Get existing open window or if none, make a new one:
+        EditorWindow.GetWindow(typeof(BrushSettingsWindow));
+        readSettings();
+
+        // Get all color pallets
+        loadColorPallet();
+    }
+
+    void OnGUI()
+    {
+        GUILayout.Label("Display Settings", EditorStyles.boldLabel);
+
+        if (_colorOptions == null)
+            loadColorPallet();
+
+        var oldPalletSelection = _selectedColorPallet;
+        _selectedColorPallet = EditorGUILayout.Popup("Select color scheme", _selectedColorPallet, _colorOptions);
+        if (oldPalletSelection != _selectedColorPallet)
+        {
+            ColorPalletReader.Read(_colorPallets[_selectedColorPallet]);
+        }
+
+        EditorGUILayout.Separator();
+
+        VertexSize = EditorGUILayout.Slider("Vertex size", VertexSize, 0.0f, 1.0f);
+        ShowVertexInfo = EditorGUILayout.Toggle("Show vertex info", ShowVertexInfo);
+
+        EditorGUILayout.Separator();
+
+        GridSize = EditorGUILayout.FloatField("Grid Size", GridSize);
+        if (GridSize < 0)
+            GridSize = 0;
+
+        SnapToGrid = EditorGUILayout.Toggle("Snap to grid", SnapToGrid);
+        ShowSnapGrid = EditorGUILayout.Toggle("Show snap grid", ShowSnapGrid);
+
+        if (GUI.changed == true)
+        {
+            EditorUtility.SetDirty(this);
+        }
+    }
+
+    public void OnFocus()
+    {
+        loadColorPallet();
+    }
+
+    public void OnLostFocus()
+    {
+        writeSettings();
+    }
+    public void OnDestroy()
+    {
+        writeSettings();
+    }
+
+    public static void Initialize()
+    {
+        if (_initialized == false)
+        {
+            readSettings();
+            loadColorPallet();
+        }
+    }
+
+    private static void readSettings()
+    {
+        if (_initialized == false)
+        {
+            _initialized = true;
+            if (EditorPrefs.HasKey("SelectedColorPallet"))
+                _selectedColorPallet = EditorPrefs.GetInt("SelectedColorPallet");
+            if (EditorPrefs.HasKey("VertexSize"))
+                VertexSize = EditorPrefs.GetFloat("VertexSize");
+            if (EditorPrefs.HasKey("ShowVertexInfo"))
+                ShowVertexInfo = EditorPrefs.GetBool("ShowVertexInfo");
+            if (EditorPrefs.HasKey("GridSize"))
+                GridSize = EditorPrefs.GetFloat("GridSize");
+            if (EditorPrefs.HasKey("SnapToGrid"))
+                SnapToGrid = EditorPrefs.GetBool("SnapToGrid");
+            if (EditorPrefs.HasKey("ShowSnapGrid"))
+                ShowSnapGrid = EditorPrefs.GetBool("ShowSnapGrid");
+        }
+    }
+
+    private static void writeSettings()
+    {
+        EditorPrefs.SetInt("SelectedColorPallet", _selectedColorPallet);
+        EditorPrefs.SetFloat("VertexSize", VertexSize);
+        EditorPrefs.SetBool("ShowVertexInfo", ShowVertexInfo);
+        EditorPrefs.SetFloat("GridSize", GridSize);
+        EditorPrefs.SetBool("SnapToGrid", SnapToGrid);
+        EditorPrefs.SetBool("ShowSnapGrid", ShowSnapGrid);
+    }
+
+    private static void loadColorPallet()
+    {
+        _colorPallets = Resources.LoadAll<ColorPallet>("ColorPallets");
+        _colorOptions = new string[_colorPallets.Length];
+        for (int i = 0; i < _colorPallets.Length; i++)
+        {
+            _colorOptions[i] = _colorPallets[i].name;
+        }
+        ColorPalletReader.Read(_colorPallets[_selectedColorPallet]);
+    }
+}
