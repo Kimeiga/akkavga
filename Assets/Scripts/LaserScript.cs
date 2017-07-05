@@ -12,6 +12,8 @@ public class LaserScript : MonoBehaviour {
 	 * 4 hitting enemy
 	 */
 
+	//hi
+
 
 	public float speed;
 
